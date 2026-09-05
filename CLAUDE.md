@@ -18,6 +18,8 @@ Local-first universal message database with built-in MCP server. Ingests message
 ├── macos/            Swift macOS app wrapper
 │   ├── OpenMessage/  Swift package (BackendManager, PairingView, etc.)
 │   └── build.sh      Builds universal binary + .app + .dmg
+├── mobile/           Go → C entrypoints for iOS (c-archive, //go:build ios)
+├── ios/              SwiftUI iPadOS app (backend linked in, not spawned)
 ├── site/             Static website (deployed to openmessage.ai)
 └── vercel.json       Vercel config (root — NOT site/vercel.json)
 ```
@@ -189,6 +191,38 @@ To update the GitHub release:
 ```bash
 gh release upload v0.1.0 macos/build/OpenMessage.dmg --repo MaxGhenis/openmessage --clobber
 ```
+
+## Building the iPadOS app
+
+```bash
+./ios/build-framework.sh                    # Go backend → OpenMessageKit.xcframework
+xcodegen generate --spec ios/project.yml    # → ios/OpenMessage.xcodeproj (git-ignored)
+open ios/OpenMessage.xcodeproj              # pick your iPad, set a signing team, ⌘R
+```
+
+**iOS cannot spawn the backend.** There is no fork/exec and no `Process` in the
+SDK, so unlike macOS the Go backend is compiled to a static library (`mobile/`,
+`//go:build ios`) and run in-process on a goroutine —
+`ios/Sources/EmbeddedBackend.swift` is the iOS counterpart to
+`BackendManager.swift`. This works only because every dependency is pure Go;
+`modernc.org/sqlite` is what keeps a C SQLite out of the cross-compile.
+
+Two traps worth knowing:
+
+- **Rebuild the framework after any Go change.** Xcode has no idea the Go
+  sources exist and will link a stale archive. An undefined `OM*` symbol at link
+  time means exactly this.
+- **`ios/Info.plist` is generated** from `info.properties` in `ios/project.yml`
+  on every `xcodegen generate`. Editing the plist directly loses the change
+  silently — and a missing usage-description key hard-crashes the app on first
+  Contacts access.
+
+`ContactsManager.swift` is shared verbatim with the Mac app (pure Contacts +
+Foundation, no AppKit); everything else in `ios/Sources/` is iOS-specific.
+
+See [ios/README.md](ios/README.md) for the pairing flow and the platform limits
+(no background sync, no iMessage/Signal-Desktop import — both are iPadOS
+constraints rather than unfinished work).
 
 ## Testing
 

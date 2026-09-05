@@ -38,3 +38,9 @@ output/
 /cc.json
 /.tmp-*.sql
 .gitnexus
+
+# iOS/iPadOS build outputs. The Xcode project and Info.plist are generated from
+# ios/project.yml by XcodeGen, so both are disposable — edit the spec, not these.
+ios/build/
+ios/OpenMessage.xcodeproj/
+ios/Info.plist
