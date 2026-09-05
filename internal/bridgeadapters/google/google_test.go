@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -57,6 +59,13 @@ func TestEventFailureClassification(t *testing.T) {
 		{
 			name:      "Gaia logout requires reauth",
 			event:     &events.GaiaLoggedOut{},
+			terminal:  true,
+			wantClass: bridge.FailureReauthRequired,
+		},
+		{
+			name: "registration gone requires reauth, not credential repair",
+			event: &events.ListenFatalError{Error: fmt.Errorf("failed to refresh auth token: %w",
+				events.HTTPError{Resp: &http.Response{StatusCode: http.StatusNotFound}})},
 			terminal:  true,
 			wantClass: bridge.FailureReauthRequired,
 		},

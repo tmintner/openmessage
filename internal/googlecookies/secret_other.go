@@ -14,8 +14,8 @@ func NativeSupported() bool {
 	return false
 }
 
-func defaultChromeProfileDir(home string) string {
-	return filepath.Join(home, ".config", "google-chrome", "Default")
+func chromeUserDataDir(home string) string {
+	return filepath.Join(home, ".config", "google-chrome")
 }
 
 func chromeSafeStorageSecret(ctx context.Context) ([]byte, error) {

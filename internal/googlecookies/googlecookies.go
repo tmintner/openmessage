@@ -68,6 +68,122 @@ func DefaultChromeProfile() string {
 	return defaultChromeProfileDir(home)
 }
 
+// defaultChromeProfileDir picks the Chrome profile whose cookie store actually
+// holds the signed-in Google account. Chrome's first profile is "Default", but a
+// user with more than one profile keeps their account in "Profile 1", "Profile
+// 2", … — and the old hardcoded "Default" then pointed at a directory that may
+// not even exist, silently disabling native cookie self-heal. We walk the
+// profiles Chrome records in "Local State" (falling back to a directory scan),
+// preferring the one Chrome used last, and return the first whose cookie DB
+// contains the .google.com account cookies. If none qualifies we return any
+// profile that at least has a cookie DB, then ".../Default" as a last resort.
+func defaultChromeProfileDir(home string) string {
+	base := chromeUserDataDir(home)
+	fallback := filepath.Join(base, "Default")
+
+	var firstWithDB string
+	for _, name := range chromeProfileNames(base) {
+		dir := filepath.Join(base, name)
+		if !hasCookieDB(dir) {
+			continue
+		}
+		if firstWithDB == "" {
+			firstWithDB = dir
+		}
+		if profileHasAccountCookies(dir) {
+			return dir
+		}
+	}
+	if firstWithDB != "" {
+		return firstWithDB
+	}
+	return fallback
+}
+
+// chromeProfileNames lists candidate profile directory names, most likely first.
+func chromeProfileNames(base string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+
+	if raw, err := os.ReadFile(filepath.Join(base, "Local State")); err == nil {
+		var ls struct {
+			Profile struct {
+				InfoCache     map[string]json.RawMessage `json:"info_cache"`
+				ProfilesOrder []string                   `json:"profiles_order"`
+				LastUsed      string                     `json:"last_used"`
+			} `json:"profile"`
+		}
+		if json.Unmarshal(raw, &ls) == nil {
+			add(ls.Profile.LastUsed)
+			for _, name := range ls.Profile.ProfilesOrder {
+				add(name)
+			}
+			for name := range ls.Profile.InfoCache {
+				add(name)
+			}
+		}
+	}
+
+	// Directory scan fallback (and backfill for anything Local State missed).
+	add("Default")
+	if entries, err := os.ReadDir(base); err == nil {
+		for _, e := range entries {
+			if e.IsDir() && strings.HasPrefix(e.Name(), "Profile ") {
+				add(e.Name())
+			}
+		}
+	}
+	return out
+}
+
+func hasCookieDB(profile string) bool {
+	for _, c := range []string{
+		filepath.Join(profile, "Network", "Cookies"),
+		filepath.Join(profile, "Cookies"),
+	} {
+		if _, err := os.Stat(c); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// profileHasAccountCookies reports whether the profile's cookie DB carries the
+// .google.com SID and SAPISID rows — the marker of a signed-in Google account.
+// Row presence is enough; the values stay encrypted here.
+func profileHasAccountCookies(profile string) bool {
+	dbCopy, cleanup, err := snapshotCookieDB(profile)
+	if err != nil {
+		return false
+	}
+	defer cleanup()
+	rows, err := readCookieRows(dbCopy)
+	if err != nil {
+		return false
+	}
+	var haveSID, haveSAPISID bool
+	for _, row := range rows {
+		if row.host != ".google.com" {
+			continue
+		}
+		switch row.name {
+		case "SID":
+			haveSID = true
+		case "SAPISID":
+			haveSAPISID = true
+		}
+	}
+	return haveSID && haveSAPISID
+}
+
 // Refresh reads Google cookies from the Chrome profile and rewrites
 // auth_data.cookies in sessionPath. It never logs or returns cookie values.
 func Refresh(ctx context.Context, profile, sessionPath string) error {

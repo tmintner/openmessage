@@ -252,6 +252,25 @@ Messages **linked-device session has lapsed** — the phone silently unlinked th
 device (common after travel / network changes). The connection flag lies; the
 session is dead for sends.
 
+**Variant (app was offline for weeks):** `google.connected=false`, `paired=true`,
+`last_error="Google Messages connection lost; reconnecting…"` on a loop right
+after launch, and a **cookie refresh doesn't help**. Run the backend with
+`OPENMESSAGES_LOG_LEVEL=debug` (the default logs only WRN+, and macOS os_log
+capture often shows nothing): the tell is
+
+```
+POST …/Registration/RegisterRefresh → HTTP 404
+TachyonError: "Requested entity was not found."  (type 5, NOT_FOUND)
+```
+
+The device **registration itself** is gone server-side — not the cookies. Only a
+re-pair fixes it. As of the Sept 2026 fix `client.GoogleRegistrationGone`
+classifies this as `FailureReauthRequired` → `needs_repair` (supervisor stops
+the reconnect storm; web UI shows the "Re-pair" banner). Before that it looped
+`ListenFatalError` → "connection lost" forever and hammered Google's auth
+endpoint. A one-off `HTTP 401` is different — that's an expired cookie the native
+self-heal can refresh without re-pairing.
+
 Key facts:
 
 - The native macOS **Platforms** view (`OpenMessageApp.swift`) only offers a
@@ -290,10 +309,15 @@ Key facts:
    - decrypt each `encrypted_value`: strip `v10` prefix, AES-128-CBC, IV = 16
      spaces, strip PKCS7 padding; recent Chrome prepends a 32-byte domain hash —
      try stripping the first 32 bytes if the result isn't clean UTF-8.
-   - source: `~/Library/Application Support/Google/Chrome/Default/Cookies`
-     (the signed-in profile; `Local State` maps profiles → accounts). Build a
-     `name=value; name=value; …` header from `.google.com` / `messages.google.com`
-     cookies and write it to a `0600` file.
+   - source: `~/Library/Application Support/Google/Chrome/<profile>/Cookies`
+     (or `<profile>/Network/Cookies`). **The profile is often NOT `Default`** —
+     multi-profile Chrome keeps the account in `Profile 1`/`Profile 2`/…
+     (`Local State` → `profile.info_cache` maps dir → account email). Pick the
+     profile whose cookie DB has the `.google.com` `SID`+`SAPISID` rows. The
+     native self-heal (`googlecookies.defaultChromeProfileDir`) now does this
+     discovery; `scripts/refresh-google-session-cookies-macos.py` takes
+     `--profile`. Build a `name=value; …` header from `.google.com` /
+     `messages.google.com` cookies and write it to a `0600` file.
    - **Extract cookies immediately before pairing** — pairing with an older
      extract has returned HTTP 401 (the staleness threshold is not
      established; don't rely on any grace window).

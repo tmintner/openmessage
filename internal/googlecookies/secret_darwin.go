@@ -31,8 +31,8 @@ func NativeSupported() bool {
 	return false
 }
 
-func defaultChromeProfileDir(home string) string {
-	return filepath.Join(home, "Library", "Application Support", "Google", "Chrome", "Default")
+func chromeUserDataDir(home string) string {
+	return filepath.Join(home, "Library", "Application Support", "Google", "Chrome")
 }
 
 // chromeSafeStorageSecret reads Chrome's cookie-encryption password from the

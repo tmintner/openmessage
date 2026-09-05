@@ -4,6 +4,8 @@ import "errors"
 
 var errGoogleSendsRepeatedlyFailed = errors.New("Google sends repeatedly failed while the phone was responding")
 
+var errGoogleRegistrationGone = errors.New("Google Messages device registration no longer exists server-side (re-pair required)")
+
 // GoogleLifecycleNotifier lets legacy App send paths report lifecycle changes
 // without owning reconnect or repair. The Google bridge adapter implements
 // this interface and leaves all generation changes to the supervisor.

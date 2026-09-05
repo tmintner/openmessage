@@ -27,6 +27,13 @@ type OnSessionInvalid func()
 // on a mere network blip or token-refresh race.
 type OnConnectionLost func()
 
+// OnSessionNeedsRepair is called when the linked-device session is dead in a way
+// only a re-pair can fix — the device registration was removed server-side
+// (RegisterRefresh returns 404). Unlike OnConnectionLost the caller should stop
+// retrying; unlike OnSessionInvalid the session file is KEPT so the UI can show
+// which account needs re-pairing.
+type OnSessionNeedsRepair func()
+
 type EventHandler struct {
 	Store                    *db.Store
 	Logger                   zerolog.Logger
@@ -37,6 +44,7 @@ type EventHandler struct {
 	OnConversationsChange    func()
 	OnSessionInvalid         OnSessionInvalid
 	OnConnectionLost         OnConnectionLost
+	OnSessionNeedsRepair     OnSessionNeedsRepair
 	OnIncomingMessage        func(*db.Message)
 	OnPendingMedia           func(conversationID, messageID string)
 	OnMessagesChange         func(string)
@@ -69,6 +77,21 @@ func (h *EventHandler) Handle(rawEvt any) {
 	case *events.PairSuccessful:
 		h.Logger.Info().Str("phone_id", evt.PhoneID).Msg("Pairing successful")
 	case *events.ListenFatalError:
+		// A 404 from RegisterRefresh means the device registration is gone
+		// server-side — the phone unlinked this device. Retrying can't recover
+		// it and libgm re-raises this on every refresh, so route it to a
+		// re-pair prompt instead of an endless "reconnecting…" loop.
+		if GoogleRegistrationGone(evt.Error) {
+			h.Logger.Warn().Err(evt.Error).
+				Msg("Google Messages linked-device registration is gone — re-pair required")
+			switch {
+			case h.OnSessionNeedsRepair != nil:
+				h.OnSessionNeedsRepair()
+			case h.OnConnectionLost != nil:
+				h.OnConnectionLost()
+			}
+			return
+		}
 		// Treat as transient: mark the connection lost (keep the session) and
 		// let the reconnect watchdog retry. libgm raises this on a single
 		// failed token refresh or a one-off 401, so deleting the session here

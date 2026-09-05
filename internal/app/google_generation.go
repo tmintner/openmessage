@@ -44,6 +44,7 @@ func (a *App) BeginGoogleGeneration(cli *client.Client) *GoogleGeneration {
 		OnPhoneRespondingChange: generation.PhoneResponding,
 		OnConnectionLost:        generation.ConnectionLost,
 		OnSessionInvalid:        generation.SessionInvalid,
+		OnSessionNeedsRepair:    generation.SessionNeedsRepair,
 	}
 
 	a.clientMu.Lock()
@@ -139,6 +140,23 @@ func (g *GoogleGeneration) SessionInvalid() {
 	a.setGoogleLastError("Google Messages session invalidated; pair again")
 	a.emitStatusChange(false)
 	a.Logger.Warn().Msg("Disconnected from Google Messages")
+}
+
+// SessionNeedsRepair handles a server-side loss of the device registration
+// (RegisterRefresh 404). The session file is kept — a re-pair overwrites it —
+// but the reconnect loop is parked and needs_repair drives the UI's re-pair
+// prompt. The supervisor path also classifies this as FailureReauthRequired;
+// this keeps the pure-legacy path (no supervisor) from looping too.
+func (g *GoogleGeneration) SessionNeedsRepair() {
+	if !g.current() {
+		return
+	}
+	a := g.app
+	a.Connected.Store(false)
+	a.setGoogleLastError("Google Messages device link was removed. Re-pair to reconnect.")
+	a.markGoogleNeedsRepairAndPark(errGoogleRegistrationGone)
+	a.emitStatusChange(false)
+	a.Logger.Warn().Msg("Google Messages registration gone — re-pair required")
 }
 
 func (g *GoogleGeneration) SyncInterrupted() {

@@ -271,6 +271,18 @@ func (a *Adapter) classifyTransportError(err error, operation, fingerprint strin
 	if failure, ok := asOpError(err); ok {
 		return failure
 	}
+	if client.GoogleRegistrationGone(err) {
+		// The linked-device registration is gone server-side (RegisterRefresh
+		// 404). A cookie refresh can't fix this — only a re-pair. Block the
+		// supervisor so it stops the reconnect loop and the UI shows a re-pair
+		// prompt.
+		return bridge.OpError{
+			Class:       bridge.FailureReauthRequired,
+			Operation:   operation,
+			Fingerprint: "google_registration_gone",
+			Cause:       err,
+		}
+	}
 	if app.IsGoogleAuthExpiredError(err) {
 		class := bridge.FailureCredentialsExpired
 		if !a.repairAvailable() {
@@ -503,7 +515,8 @@ func (r *run) handleEvent(evt any) {
 	r.generation.Handler.Handle(evt)
 	if failure, terminal := r.classifyEvent(evt); terminal {
 		if failure.Class == bridge.FailureCredentialsExpired ||
-			failure.Class == bridge.FailureUpgradeRequired {
+			failure.Class == bridge.FailureUpgradeRequired ||
+			failure.Class == bridge.FailureReauthRequired {
 			r.applyFailureStatus(failure)
 		}
 		r.requestFinish(failure)
@@ -636,9 +649,10 @@ func (r *run) applyFailureStatus(failure bridge.OpError) {
 		}
 		r.adapter.host.FlagGoogleNeedsRepair()
 	case bridge.FailureReauthRequired:
-		// GaiaLoggedOut is applied by the legacy handler, which also preserves
-		// the exact session deletion behavior. Other reauth failures merely end
-		// the generation and park the still-present stored session for the UI.
+		// GaiaLoggedOut runs its session-deletion through the legacy handler
+		// first, so GooglePaired() is already false here and this is a no-op for
+		// it. Other reauth failures (a dead device registration) keep the stored
+		// session and just park it with needs_repair so the UI prompts a re-pair.
 		if r.adapter.host.GooglePaired() {
 			r.adapter.host.FlagGoogleNeedsRepair()
 		}

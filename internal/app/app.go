@@ -570,6 +570,17 @@ func (a *App) LoadAndConnect() error {
 			a.emitStatusChange(false)
 			a.Logger.Warn().Msg("Disconnected from Google Messages")
 		},
+		OnSessionNeedsRepair: func() {
+			// The device registration is gone server-side (RegisterRefresh 404).
+			// Keep session.json — a re-pair overwrites it, and the UI uses it to
+			// name the account — but stop the reconnect loop and surface the
+			// re-pair prompt via needs_repair.
+			a.Connected.Store(false)
+			a.setGoogleLastError("Google Messages device link was removed. Re-pair to reconnect.")
+			a.markGoogleNeedsRepairAndPark(errGoogleRegistrationGone)
+			a.emitStatusChange(false)
+			a.Logger.Warn().Msg("Google Messages registration gone — re-pair required")
+		},
 	}
 	// Wrap the handler so a panic on a malformed event can't kill libgm's
 	// single long-poll goroutine (it has no recover() of its own). A dead
@@ -622,6 +633,9 @@ func (a *App) LoadAndConnect() error {
 func isGoogleAuthInvalid(err error) bool {
 	if err == nil {
 		return false
+	}
+	if client.GoogleRegistrationGone(err) {
+		return true
 	}
 	m := strings.ToLower(err.Error())
 	return strings.Contains(m, "invalid authentication credentials") ||
